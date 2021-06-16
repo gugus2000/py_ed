@@ -51,17 +51,29 @@ def open_file(path):
     global G_RANGE
 
     if G_RESTRICTED:
-        if len(path) > 1:
+        if len(path) >= 1:
             if path[:1] == '/':
                 display_error('restricted')
-                return 0
-        if len(path) > 3:
+                return 2
+            if path[:1] == '!':
+                display_error('restricted')
+                return 2
+        if len(path) >= 3:
             if path[:3] == '../' or path[:3] == '..\\':
                 display_error('restricted')
-                return 0
+                return 2
             if path[1:3] == ':\\\\':
                 display_error('restricted')
-                return 0
+                return 2
+    if len(path) >= 1:
+        if path[:1] == '!':
+            """ Result of the shell command """
+            cmd = os.popen(path[1:])
+            G_BUFFER_READ = cmd.read().split('\n')
+            G_BUFFER_WROTE = cmd.read().split('\n')
+            G_FILE = G_DEFAULT_FILE
+            G_RANGE = [len(G_BUFFER_WROTE), len(G_BUFFER_WROTE)]
+            return 0
     with open(path, 'r') as file:
         for i, l in enumerate(file):
             G_BUFFER_READ.append(l)
@@ -69,7 +81,8 @@ def open_file(path):
         if not G_SILENT:
             print(file.tell())
         G_FILE = path
-        G_RANGE = [0, 0]
+        G_RANGE = [len(G_BUFFER_WROTE), len(G_BUFFER_WROTE)]
+        return 0
 
 def file_changed():
     """ Check if the user edited the current file """
@@ -89,8 +102,22 @@ def get_first_adress(string):
     elif string[0] == '$':
         return len(G_BUFFER_WROTE)
     else:
+        if string[0] == '\'':
+            if len(string) > 1:
+                if string[1] in G_MARKED_LINE:
+                    number = G_MARKED_LINE[string[1]]
+                    index_char = 3
+                    if len(string) > 2:
+                        if string[2] in (' ', '-', '+'):
+                            offset_number, offset_index = get_offset(string[2:])
+                            number += offset_number
+                            index_char += offset_index
+                else:
+                    display_error('not_marked')
+            else:
+                display_error('missing_mark_key')
         """ can be a combination (like 23 or ++++) """
-        if string[0] == '+':
+        elif string[0] == '+':
             """ start with + """
             number = G_RANGE[1]
             if len(string) > 1:
@@ -114,30 +141,30 @@ def get_first_adress(string):
                 elif string[1].isnumeric():
                     """ add a number of line to current line number """
                     offset = False
-                    for index_char in range(len(string[1:])):
+                    for index_char in range(1, len(string)):
                         if string[index_char].isnumeric():
                             pass
                         if string[index_char] in (' ', '+', '-'):
                             """ manage offset """
                             offset = True
-                            number += int(string[:index_char])
+                            number += int(string[1:index_char])
                             offset_number, offset_index = get_offset(string[index_char:])
                             number += offset_number
                             index_char += offset_index
                             break
                         else:
                             """ unexpected symbol """
-                            return int(string[:index_char]), index_char
+                            return number + int(string[1:index_char+1]), index_char+1
                     if not offset:
                         """ no offset """
-                        number = int(string)
+                        number += int(string[1:])
                 else:
                     """ strange case where someone want to go one line after the current one minus an offset """
                     number += 1
                     if string[1] in (' ', '-'):
                         """ manage offset """
                         offset_number, offset_index = get_offset(string[2:])
-                        return number + offset_number, 2 + offset_index
+                        return number - offset_number, 2 + offset_index
                     else:
                         """ unexpected symbol """
                         return number, 2
@@ -163,22 +190,22 @@ def get_first_adress(string):
                                 return number, index_char
                 elif string[1].isnumeric():
                     offset = False
-                    for index_char in range(len(string[1:])):
+                    for index_char in range(1, len(string)):
                         if string[index_char].isnumeric():
                             pass
                         elif string[index_char] in ('+', '-', ' '):
                             offset = True
-                            number -= int(string[:index_char])
+                            number -= int(string[1:index_char])
                             offset_number, offset_index = get_offset(string[index_char:])
                             number += offset_number
                             index_char += offset_index
                             break
                         else:
                             """ unexpected symbol """
-                            return int(string[:index_char]), index_char
+                            return number - int(string[1:index_char+1]), index_char+1
                     if not offset:
                         """ no offset """
-                        number = int(string)
+                        number -= int(string[1:])
                 else:
                     """ strange case where someone want to go one line below the current one plus an offset """
                     number -= 1
@@ -209,11 +236,10 @@ def get_first_adress(string):
                     break
                 else:
                     """ unexpected symbol """
-                    return number + int(string[:index_char]), index_char + 1
+                    return number + int(string[:index_char]), index_char
             if not offset:
                 """ no offset """
                 number += int(string)
-                index_char += 1
         return number, index_char
 
 def get_offset(string):
@@ -221,7 +247,7 @@ def get_offset(string):
     if string[0] == ' ':
         if len(string) > 1:
             offset_number, offset_index = get_offset(string[1:])
-            return 1 + offset_number, 1 + offset_index
+            return offset_number, 1 + offset_index
         else:
             return 0, 1
     if string[0] == '+':
@@ -348,7 +374,7 @@ while index < len(sys.argv):
                 display_error('unexpected_argument_shell')
         else:
             if index == len(sys.argv)-1:
-                open_file(sys.argv[index])
+                G_EXIT_STATUS = open_file(sys.argv[index])
             else:
                 display_error('unexpected_argument_shell')
         index += 1
@@ -370,7 +396,7 @@ while G_RUNNING:
                 display_error('too many arguments')
             elif len(command) == 2:
                 if not file_changed():
-                    open_file(command[1])
+                    G_EXIT_STATUS = open_file(command[1])
                 else:
                     display_error('unsaved_change')
             else:
@@ -380,7 +406,7 @@ while G_RUNNING:
             if len(command) > 2:
                 display_error('too many arguments')
             elif len(command) == 2:
-                open_file(command[1])
+                G_EXIT_STATUS = open_file(command[1])
             else:
                 display_error('missing_argument')
         elif command[0] == 'f':
@@ -524,91 +550,94 @@ while G_RUNNING:
             if not G_LINE_ADRESSING:
                 """ .,. """
                 G_RANGE[0] = G_RANGE[1]
-            for lines in G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]:
-                print(lines, end='')
-            G_RANGE[1] = G_RANGE[0]
-        elif command[0] == 'c':
-            """ change lines """
-            text = get_text()
-            G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
-            G_REGISTER_CUT = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]
-            if len(text) > 0:
+                for lines in G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]:
+                    print(lines, end='')
+                G_RANGE[1] = G_RANGE[0]
+            elif command[0] == 'c':
+                """ change lines """
+                text = get_text()
+                G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
+                G_REGISTER_CUT = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]
+                if len(text) > 0:
+                    if not G_LINE_ADRESSING:
+                        """ .,. """
+                        G_RANGE[0] = G_RANGE[1]
+                    G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + text + G_BUFFER_WROTE[G_RANGE[1] + 1:]
+                    if len(G_BUFFER_WROTE) > G_RANGE[0] + len(text) - 1:
+                        G_RANGE = [G_RANGE[0] + len(text) - 1, G_RANGE[0] + len(text) - 1]
+                    else:
+                        G_RANGE = [len(G_BUFFER_WROTE), len(G_BUFFER_WROTE)]
+                else:
+                    G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1] + 1:]
+                    if len(G_BUFFER_WROTE) >= G_RANGE[0]:
+                        G_RANGE[1] = G_RANGE[0]
+                    else:
+                        G_RANGE = [G_RANGE[0] - 1, G_RANGE[0] - 1]
+            elif command[0] == 'd':
+                """ delete lines """
+                G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
                 if not G_LINE_ADRESSING:
                     """ .,. """
                     G_RANGE[0] = G_RANGE[1]
-                G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + text + G_BUFFER_WROTE[G_RANGE[1] + 1:]
-                if len(G_BUFFER_WROTE) > G_RANGE[0] + len(text) - 1:
-                    G_RANGE = [G_RANGE[0] + len(text) - 1, G_RANGE[0] + len(text) - 1]
-                else:
-                    G_RANGE = [len(G_BUFFER_WROTE), len(G_BUFFER_WROTE)]
-            else:
-                G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1] + 1:]
+                G_REGISTER_DELETE = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]
+                G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
                 if len(G_BUFFER_WROTE) >= G_RANGE[0]:
                     G_RANGE[1] = G_RANGE[0]
                 else:
                     G_RANGE = [G_RANGE[0] - 1, G_RANGE[0] - 1]
-        elif command[0] == 'd':
-            """ delete lines """
-            G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
-            if not G_LINE_ADRESSING:
-                """ .,. """
-                G_RANGE[0] = G_RANGE[1]
-            G_REGISTER_DELETE = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]
-            G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
-            if len(G_BUFFER_WROTE) >= G_RANGE[0]:
-                G_RANGE[1] = G_RANGE[0]
-            else:
-                G_RANGE = [G_RANGE[0] - 1, G_RANGE[0] - 1]
-        elif command[0] == "j":
-            """ join lines """
-            if not G_LINE_ADRESSING:
-                """ .,.+1 """
-                G_RANGE = [G_RANGE[1], G_RANGE[1]+1]
-            if G_RANGE[0] != G_RANGE[1]:
-                G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
-                G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + [''.join(G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]]).replace('\n', '')] + G_BUFFER_WROTE[G_RANGE[1]:]
-                G_RANGE[1] = G_RANGE[0]
-        elif command[0][0] == 'k':
-            if len(command) > 0 or len(command[0]) > 2:
-                display_error('unknown_command')
-            if command[0][1] in ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'):
+            elif command[0] == "j":
+                """ join lines """
                 if not G_LINE_ADRESSING:
-                    """ . """
+                    """ .,.+1 """
+                    G_RANGE = [G_RANGE[1], G_RANGE[1]+1]
+                if G_RANGE[0] != G_RANGE[1]:
+                    G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
+                    G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + [''.join(G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]]).replace('\n', '')] + G_BUFFER_WROTE[G_RANGE[1]:]
+                    G_RANGE[1] = G_RANGE[0]
+            elif command[0][0] == 'k':
+                if len(command) > 0 or len(command[0]) > 2:
+                    display_error('unknown_command')
+                if command[0][1] in ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'):
+                    if not G_LINE_ADRESSING:
+                        """ . """
+                        G_RANGE[0] = G_RANGE[1]
+                    G_MARKED_LINE[command[0][1]] = G_RANGE[1]
+            elif command[0][0] == 'm':
+                """ move lines """
+                if not G_LINE_ADRESSING:
+                    """ .,. """
                     G_RANGE[0] = G_RANGE[1]
-                G_MARKED_LINE[command[0][1]] = G_RANGE[1]
-        elif command[0][0] == 'm':
-            """ move lines """
-            if not G_LINE_ADRESSING:
-                """ .,. """
-                G_RANGE[0] = G_RANGE[1]
-            if len(command) > 1:
-                number, index = get_first_adress(command[0][1:] + ''.join(command[1:]))
-            else:
-                number, index = get_first_adress(command[0][1:])
-            if (number, index) == (0, 0):
-                display_error('invalid_adress')
-            G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
-            if number == 0:
-                G_BUFFER_WROTE = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
-            elif number >= G_RANGE[0] and number <= G_RANGE[1]:
-                display_error('invalid_adress')
-            else:
-                if number < G_RANGE[0]:
-                    G_BUFFER_WROTE = G_BUFFER_WROTE[:number+1] + G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[number+1:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
+                if len(command) > 1:
+                    number, index = get_first_adress(command[0][1:] + ''.join(command[1:]))
                 else:
-                    G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:number+1] + G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[number+1:]
-        elif command[0] == 'n':
-            if not G_LINE_ADRESSING:
-                """ .,. """
+                    number, index = get_first_adress(command[0][1:])
+                if (number, index) == (0, 0):
+                    display_error('invalid_adress')
+                G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
+                if number == 0:
+                    G_BUFFER_WROTE = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
+                elif number >= G_RANGE[0] and number <= G_RANGE[1]:
+                    display_error('invalid_adress')
+                else:
+                    if number < G_RANGE[0]:
+                        G_BUFFER_WROTE = G_BUFFER_WROTE[:number+1] + G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[number+1:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
+                    else:
+                        G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:number+1] + G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[number+1:]
+            elif command[0] == 'n':
+                if not G_LINE_ADRESSING:
+                    """ .,. """
+                    G_RANGE[0] = G_RANGE[1]
+                for i in range(G_RANGE[0], G_RANGE[1]):
+                    print(str(i) + '	' + G_BUFFER_WROTE[i][:-1])
                 G_RANGE[0] = G_RANGE[1]
-            for i in range(G_RANGE[0], G_RANGE[1]+1):
-                print(str(i) + '	' + G_BUFFER_WROTE[i][:-1])
-            G_RANGE[0] = G_RANGE[1]
-        elif G_LINE_ADRESSING:
-            display_error('unknown_command')
-        """ reinitialize toggles """
-        G_LINE_ADRESSING = False
-    except Exception as error:
-        """ reinitialize toggles """
-        raise(error)
-        G_LINE_ADRESSING = False
+            elif G_LINE_ADRESSING:
+                display_error('unknown_command')
+            if G_EXIT_STATUS != 0:
+                """ An error ocurred """
+                G_RUNNING = False
+            """ reinitialize toggles """
+            G_LINE_ADRESSING = False
+        except Exception as error:
+            """ reinitialize toggles """
+            raise(error)
+            G_LINE_ADRESSING = False
