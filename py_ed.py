@@ -2,13 +2,14 @@
 import sys
 """ Needed to get shell command works """
 import os
+""" Needed to get regex to work until I finish my regex parser"""
+import re
 
 """ Global variables """
 G_LOOSE_EXIT_STATUS = False # Do not exit with bad status if a command happens to "fail" (default: False)
 G_VERSION = '0.1'           # version number
 G_PROMPTING_BOOL = False    # Turn prompting on
 G_PROMPTING_STRING = '*'    # Command prompt string
-G_DEFAULT_FILE = 'temp'     # Default file to open
 G_RESTRICTED = False        # Disable editing files out of the current directory and execution of shell commands
 G_SILENT = False            # Disable the printing of bytes count by 'e', 'E', 'r' and 'w' commands and '!' prompt after a '!' command.
 G_VERBOSE = False           # Display error explanations
@@ -69,12 +70,16 @@ def open_file(path):
         if path[:1] == '!':
             """ Result of the shell command """
             cmd = os.popen(path[1:])
-            G_BUFFER_READ = cmd.read().split('\n')
-            G_BUFFER_WROTE = cmd.read().split('\n')
-            G_FILE = G_DEFAULT_FILE
+            content = cmd.read()
+            G_BUFFER_READ = content.split('\n')
+            G_BUFFER_WROTE = content.split('\n')
             G_RANGE = [len(G_BUFFER_WROTE), len(G_BUFFER_WROTE)]
+            if not G_SILENT:
+                print(len(content.encode('utf-8')))
             return 0
     with open(path, 'r') as file:
+        G_BUFFER_READ = []
+        G_BUFFER_WROTE = []
         for i, l in enumerate(file):
             G_BUFFER_READ.append(l)
             G_BUFFER_WROTE.append(l)
@@ -373,10 +378,7 @@ while index < len(sys.argv):
             else:
                 display_error('unexpected_argument_shell')
         else:
-            if index == len(sys.argv)-1:
-                G_EXIT_STATUS = open_file(sys.argv[index])
-            else:
-                display_error('unexpected_argument_shell')
+            G_EXIT_STATUS = open_file(' '.join(sys.argv[index:]))
         index += 1
     except Exception as error:
         sys.exit(1)
@@ -392,11 +394,11 @@ while G_RUNNING:
 
         if command[0] == 'e':
             """ edit a file (if current saved) """
-            if len(command) > 2:
+            if len(command) > 2 and command[1][0] != '!':
                 display_error('too many arguments')
-            elif len(command) == 2:
+            elif len(command) == 2 or command[1][0] == '!':
                 if not file_changed():
-                    G_EXIT_STATUS = open_file(command[1])
+                    G_EXIT_STATUS = open_file(' '.join(command[1:]))
                 else:
                     display_error('unsaved_change')
             else:
@@ -414,9 +416,9 @@ while G_RUNNING:
             if len(command) > 2:
                 display_error('too many arguments')
             elif len(command) == 2:
-                G_DEFAULT_FILE = command[1]
+                G_FILE = command[1]
             else:
-                print(G_DEFAULT_FILE)
+                print(G_FILE)
         elif command[0] == 'q':
             """ exit (if changes saved) """
             if len(command) > 1:
@@ -595,6 +597,7 @@ while G_RUNNING:
                 G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + [''.join(G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]]).replace('\n', '')] + G_BUFFER_WROTE[G_RANGE[1]:]
                 G_RANGE[1] = G_RANGE[0]
         elif command[0][0] == 'k':
+            """ mark line """
             if len(command[0]) > 2:
                 display_error('unknown_command')
             if command[0][1] in ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'):
@@ -609,10 +612,11 @@ while G_RUNNING:
                 G_RANGE[0] = G_RANGE[1]
             if len(command) > 1:
                 number, index = get_first_adress(command[0][1:] + ''.join(command[1:]))
-            else:
+            elif len(command[0]) > 1:
                 number, index = get_first_adress(command[0][1:])
-            if (number, index) == (0, 0):
-                display_error('invalid_adress')
+            else:
+                """ . """
+                number = G_RANGE[1]
             G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
             if number == 0:
                 G_BUFFER_WROTE = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:]
@@ -624,12 +628,160 @@ while G_RUNNING:
                 else:
                     G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[0]] + G_BUFFER_WROTE[G_RANGE[1]+1:number+1] + G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1] + G_BUFFER_WROTE[number+1:]
         elif command[0] == 'n':
+            """ print line with number """
             if not G_LINE_ADRESSING:
                 """ .,. """
                 G_RANGE[0] = G_RANGE[1]
             for i in range(G_RANGE[0], G_RANGE[1]):
                 print(str(i) + '	' + G_BUFFER_WROTE[i][:-1])
             G_RANGE[0] = G_RANGE[1]
+        elif command[0] == 'r':
+            """ read a file and append it """
+            if not G_LINE_ADRESSING:
+                """ $ """
+                G_RANGE = [len(G_BUFFER_WROTE), len(G_BUFFER_WROTE)]
+            if len(command) != 2:
+                display_error('missing_argument')
+            if G_RESTRICTED:
+                if len(path) >= 1:
+                    if path[:1] == '/':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                    if path[:1] == '!':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                if len(path) >= 3:
+                    if path[:3] == '../' or path[:3] == '..\\':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                    if path[1:3] == ':\\\\':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+            if len(path) >= 1:
+                if path[:1] == '!':
+                    """ Result of the shell command """
+                    cmd = os.popen(path[1:])
+                    file_content = cmd.read().split('\n')
+            with open(path, 'r') as file:
+                for i, l in enumerate(file):
+                    file_content.append(l)
+            G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
+            G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[1]+1] + file_content + G_BUFFER_WROTE[G_RANGE[1]+1:]
+        elif command[0][0] == 't':
+            """ copy a line and append it """
+            if not G_LINE_ADRESSING:
+                """ .,. """
+                G_RANGE[0] = G_RANGE[1]
+            if len(command) > 1:
+                number, index = get_first_adress(command[0][1:] + ''.join(command[1:]))
+            elif len(command[0]) > 1:
+                number, index = get_first_adress(command[0][1:])
+            else:
+                """ . """
+                number = G_RANGE[1]
+            G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
+            G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[1]+1] + G_BUFFER_WROTE[number] + G_BUFFER_WROTE[G_RANGE[1]+1:]
+        elif command[0][0] == 'w':
+            """ write lines in file """
+            if not G_LINE_ADRESSING:
+                """ 1,$ """
+                G_RANGE = [1, len(G_BUFFER_WROTE)]
+            if len(command[0]) == 1:
+                index = 1
+            elif len(command[0]) == 2 and command[0][1] == 'q':
+                index = 2
+            else:
+                display_error('missing_argument')
+            path = ' '.join(command[index:])
+            if G_RESTRICTED:
+                if len(path) >= 1:
+                    if path[:1] == '/':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                    if path[:1] == '!':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                if len(path) >= 3:
+                    if path[:3] == '../' or path[:3] == '..\\':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                    if path[1:3] == ':\\\\':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+            if len(path) >= 1:
+                if path[:1] == '!':
+                    """ To shell command """
+                    os.system(path)
+                    if not G_SILENT:
+                        print('!')
+            with open(path, 'w') as file:
+                file.write(''.join(G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]))
+                if G_FILE == '':
+                    G_FILE = path
+            if index == 2:
+                if not file_changed():
+                    G_RUNNING = False
+                else:
+                    display_error('unsaved_change')
+        elif command[0] == 'W':
+            """ append lines to file """
+            if not G_LINE_ADRESSING:
+                """ 1, $ """
+                G_RANGE = [1, len(G_BUFFER_WROTE)]
+            path = ' '.join(command[1:])
+            if G_RESTRICTED:
+                if len(path) >= 1:
+                    if path[:1] == '/':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                    if path[:1] == '!':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                if len(path) >= 3:
+                    if path[:3] == '../' or path[:3] == '..\\':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+                    if path[1:3] == ':\\\\':
+                        display_error('restricted')
+                        G_EXIT_STATUS = 2
+            if len(path) >= 1:
+                if path[:1] == '!':
+                    """ To shell command """
+                    os.system(path)
+                    if not G_SILENT:
+                        print('!')
+            with open(path, 'a') as file:
+                file.write(''.join(G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]))
+                if G_FILE == '':
+                    G_FILE = path
+        elif command[0] == 'x':
+            """ paste the cut buffer """
+            G_BUFFER_WROTE_LAST = G_BUFFER_WROTE
+            G_BUFFER_WROTE = G_BUFFER_WROTE[:G_RANGE[1]+1] + G_REGISTER_CUT + G_BUFFER_WROTE[G_RANGE[1]+1:]
+            G_RANGE[1] = G_RANGE[1] + len(G_REGISTER_CUT)
+        elif command[0] == 'y':
+            """ copy to the cut buffer """
+            if not G_LINE_ADRESSING:
+                """ .,. """
+                G_RANGE[0] = G_RANGE[1]
+            G_REGISTER_CUT = G_BUFFER_WROTE[G_RANGE[0]:G_RANGE[1]+1]
+        elif command[0] == 'z':
+            """ scrolls """
+        elif command[0][0] == '#':
+            """ comment """
+            if not G_LINE_ADRESSING:
+                G_RANGE[0] = G_RANGE[1]
+        elif command[0] == '=':
+            """ print line """
+            if not G_LINE_ADRESSING:
+                """ $ """
+                G_RANGE[1] = len(G_BUFFER_WROTE)
+            print(G_RANGE[1])
+        elif len(command) == 0:
+            """ null command """
+            if not G_LINE_ADRESSING:
+                G_RANGE[1] = G_RANGE[1]+1
+            print(G_BUFFER_WROTE[G_RANGE[1]])
         elif G_LINE_ADRESSING:
             display_error('unknown_command')
         if G_EXIT_STATUS != 0:
@@ -639,7 +791,6 @@ while G_RUNNING:
         G_LINE_ADRESSING = False
     except Exception as error:
         """ reinitialize toggles """
-        raise(error)
         G_LINE_ADRESSING = False
 if G_LOOSE_EXIT_STATUS:
     sys.exit(0)
