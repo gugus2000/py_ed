@@ -24,6 +24,10 @@ By essence, py_ed try to give the same result than ed, if you see a difference, 
 
 - implement regex parsing and commands associated with it
 
+## License
+
+MIT License, see LICENSE file for more information
+
 ## Authors
 
 - Brian W. Kernighan & P. J. Plauger - original editor algorithm for ed
